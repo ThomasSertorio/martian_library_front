@@ -5,7 +5,7 @@ import { InMemoryCache } from 'apollo-cache-inmemory'
 // links
 import { HttpLink } from 'apollo-link-http'
 import { onError } from 'apollo-link-error'
-import { ApolloLink } from 'apollo-link'
+import { ApolloLink, Observable } from 'apollo-link'
 
 export const createCache = () => {
   const cache = new InMemoryCache()
@@ -30,6 +30,35 @@ const createErrorLink = () => onError(({ graphQLErrors, networkError, operation 
     logError('GraphQL - NetworkError', networkError)
   }
 })
+const getTokens = () => {
+  const authToken = localStorage.getItem("mlToken")
+  return authToken ? { Authorization: authToken } : {}
+}
+const setTokenForOperation = async operation =>
+  operation.setContext({ headers: { ...getTokens() } })
+
+// link with token
+const createLinkWithToken = () =>
+  new ApolloLink(
+    (operation, forward) =>
+      new Observable(observer => {
+        let handle
+        Promise.resolve(operation)
+          .then(setTokenForOperation)
+          .then(() => {
+            handle = forward(operation).subscribe({
+              next: observer.next.bind(observer),
+              error: observer.error.bind(observer),
+              complete: observer.complete.bind(observer),
+            })
+          })
+          .catch(observer.error.bind(observer))
+        return () => {
+          if (handle) handle.unsubscribe()
+        }
+      })
+  )
+
 // http link
 const createHttpLink = () => new HttpLink({
   uri: 'http://localhost:3000/graphql',
@@ -40,8 +69,9 @@ export const createClient = (cache, requestLink) => {
   return new ApolloClient({
     link: ApolloLink.from([
       createErrorLink(),
+      createLinkWithToken(),
       createHttpLink()
     ]),
     cache
   })
-};
+}
